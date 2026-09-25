@@ -1,0 +1,63 @@
+﻿# Ollama модели и кэш
+export/
+models/downloads/
+models/cache/
+models/*.bin
+models/*.gguf
+
+# Временные файлы
+*.tmp
+*.temp
+*.log
+
+# Файлы окружения
+.env
+.env.local
+.env.*.local
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+env/
+
+# Windows
+desktop.ini
+
+# Резервные копии
+*.bak
+*.backup
+
+# Журналы Ollama
+Ollama.log
+ollama*.log
+
+# Конфигурация с данными
+config.json
+secrets.json
+
+# Большие файлы
+*.tar
+*.zip
+*.7z
+
+# Папка build (уже есть в проекте)
+build/
