@@ -1,189 +1,46 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "version": "1.1.0",
-  "last_updated": "2026-09-25",
-  "description": "Конфигурация моделей для локальной установки с Ollama (Mistral Small оптимизация)",
-  
-  "default_model": "mistral-small",
-  
+  "version": "2.0.0",
+  "last_updated": "2026-09-29",
+  "description": "Конфигурация автономного пакета Qwen2.5 для llama.cpp.",
+  "default_model": "qwen2.5-7b-instruct-q4-k-m",
   "models": [
     {
-      "id": "llama3.2:3b",
-      "name": "LLaMA 3.2 3B",
-      "description": "Компактная модель для слабых машин. Подходит для простых задач: чат, базовые вопросы, короткие ответы.",
-      "family": "LLaMA",
-      "version": "3.2",
-      "parameters": "3B",
-      
+      "id": "qwen2.5-7b-instruct-q4-k-m",
+      "name": "Qwen2.5 7B Instruct (Q4_K_M)",
+      "description": "Универсальная локальная модель с хорошей поддержкой русского языка. Поставляется в GGUF и запускается портативным llama.cpp.",
+      "family": "Qwen2",
+      "parameters": "7.6B",
+      "format": "GGUF Q4_K_M",
       "requirements": {
-        "min_ram_gb": 4,
-        "recommended_ram_gb": 6,
-        "disk_space_gb": 2.5,
+        "min_ram_gb": 8,
+        "recommended_ram_gb": 16,
+        "disk_space_gb": 10,
         "gpu_required": false,
         "gpu_recommended": false
       },
-      
       "performance": {
-        "speed": "fast",
-        "quality": "basic",
-        "context_window": 128000,
-        "max_output_tokens": 4096
+        "backend": "llama.cpp CPU",
+        "context_window": 8192,
+        "max_output_tokens": 1024
       },
-      
       "use_cases": [
-        "Простой чат",
-        "Быстрые ответы",
-        "Системы с ограниченными ресурсами"
+        "Универсальный чат на русском языке",
+        "Анализ и создание текста",
+        "Помощь с кодом"
       ],
-      
       "limitations": [
-        "Ограниченные возможности рассуждения",
-        "Менее точные ответы на сложные вопросы"
-      ],
-      
-      "ollama_command": "ollama pull llama3.2:3b",
-      "huggingface_url": "https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct"
-    },
-    
-    {
-          "id": "mistral-small",
-          "name": "Mistral Small (рекомендуется)",
-          "description": "Оптимальная модель для большинства задач: код, чат, анализ, русский язык. Эффективная, быстрая, высокое качество.",
-          "family": "Mistral",
-          "version": "latest",
-          "parameters": "22B (оптимизировано)",
-      
-      "requirements": {
-        "min_ram_gb": 8,
-            "recommended_ram_gb": 16,
-            "disk_space_gb": 12.5,
-        "gpu_required": false,
-        "gpu_recommended": true
-      },
-      
-      "performance": {
-            "speed": "fast",
-            "quality": "excellent",
-            "context_window": 131072,
-            "max_output_tokens": 8192
-      },
-      
-      "use_cases": [
-            "Универсальный чат (включая русский)",
-            "Генерация и анализ кода",
-            "Анализ данных",
-            "Перевод и креативное письмо",
-            "Решение комплексных задач"
-      ],
-      
-      "limitations": [
-            "Требует больше места на диске",
-            "Лучше работает с 16+ ГБ RAM для длинных контекстов"
-      ],
-      
-          "ollama_command": "ollama pull mistral-small",
-          "huggingface_url": "https://huggingface.co/mistralai/Mistral-Small-24B-Instruct-2501"
-    },
-    
-    {
-      "id": "llama3.2:latest",
-      "name": "LLaMA 3.2 Latest",
-      "description": "Последняя версия LLaMA 3.2 (обычно 7B). Автоматически обновляется при выходе новых версий.",
-      "family": "LLaMA",
-      "version": "3.2",
-      "parameters": "7B",
-      
-      "requirements": {
-        "min_ram_gb": 8,
-        "recommended_ram_gb": 12,
-        "disk_space_gb": 5,
-        "gpu_required": false,
-        "gpu_recommended": true
-      },
-      
-      "performance": {
-        "speed": "medium",
-        "quality": "good",
-        "context_window": 128000,
-        "max_output_tokens": 4096
-      },
-      
-      "use_cases": [
-        "Универсальный чат",
-        "Написание кода",
-        "Анализ текста"
-      ],
-      
-      "limitations": [
-        "Размер может меняться при обновлениях"
-      ],
-      
-      "ollama_command": "ollama pull llama3.2:latest",
-      "huggingface_url": "https://huggingface.co/meta-llama/Llama-3.2-7B-Instruct"
+        "На CPU генерация может быть медленной",
+        "Пакет содержит одну фиксированную модель"
+      ]
     }
   ],
-  
-  "alternative_models": [
-    {
-      "id": "codellama:7b",
-      "name": "Code Llama 7B",
-      "description": "Специализированная модель для программирования. Оптимизирована для генерации и объяснения кода.",
-      "parameters": "7B",
-      "min_ram_gb": 8,
-      "ollama_command": "ollama pull codellama:7b"
-    },
-    {
-      "id": "mistral:7b",
-      "name": "Mistral 7B",
-      "description": "Высокопроизводительная модель от Mistral AI. Отличный баланс скорости и качества.",
-      "parameters": "7B",
-      "min_ram_gb": 8,
-      "ollama_command": "ollama pull mistral:7b"
-    },
-    {
-      "id": "qwen2.5:7b",
-      "name": "Qwen 2.5 7B",
-      "description": "Модель от Alibaba с поддержкой множества языков. Хорошо работает с русским языком.",
-      "parameters": "7B",
-      "min_ram_gb": 8,
-      "ollama_command": "ollama pull qwen2.5:7b"
-    }
-  ],
-  
   "quantization": {
-    "description": "Ollama автоматически использует квантование для оптимизации памяти",
-    "default_format": "q4_0",
-    "available_formats": [
-      {
-        "name": "q4_0",
-        "description": "4-битное квантование (по умолчанию). Оптимальный баланс размера и качества."
-      },
-      {
-        "name": "q5_0",
-        "description": "5-битное квантование. Лучшее качество, больше размер."
-      },
-      {
-        "name": "q8_0",
-        "description": "8-битное квантование. Максимальное качество, наибольший размер."
-      }
-    ]
+    "description": "Пакет поставляется с заранее подготовленным GGUF в квантизации Q4_K_M.",
+    "default_format": "Q4_K_M"
   },
-  
-  "gpu_acceleration": {
-    "nvidia": {
-      "required_driver": "NVIDIA Driver 525+",
-      "cuda_version": "11+",
-      "description": "Автоматически определяется при наличии NVIDIA GPU"
-    },
-    "amd": {
-      "required_driver": "ROCm 5.7+",
-      "description": "Поддержка ROCm для AMD GPU (требует ручной настройки)"
-    }
-  },
-  
   "notes": {
-    "russian_language": "Все модели в списке поддерживают русский язык с разной степенью качества. Рекомендуется qwen2.5:7b для лучших результатов на русском.",
-    "context_window": "LLaMA 3.2 поддерживает контекст до 128K токенов, что позволяет работать с длинными документами.",
-    "streaming": "Все модели поддерживают streaming API для построчного вывода ответов."
+    "network": "Для установки и работы пакета сеть не требуется.",
+    "api": "llama.cpp предоставляет OpenAI-совместимый API на http://127.0.0.1:8080/v1/."
   }
 }

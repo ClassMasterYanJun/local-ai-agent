@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Скрипт для создания Git репозитория и отправки проекта на GitHub
 
@@ -65,12 +65,13 @@ function New-GitIgnore {
     }
     
     $gitignoreContent = @"
-# Ollama модели и кэш
+# Локальные данные и результаты работы
 export/
-models/downloads/
-models/cache/
-models/*.bin
-models/*.gguf
+.ollama/
+training/logs/
+training/output/
+models/package/*.gguf
+runtime/llama.cpp/
 
 # Временные файлы
 *.tmp
@@ -113,9 +114,8 @@ desktop.ini
 *.bak
 *.backup
 
-# Журналы Ollama
-Ollama.log
-ollama*.log
+# Журналы локального сервера
+llama-server*.log
 
 # Конфигурация с данными
 config.json
@@ -189,25 +189,22 @@ function Create-InitialCommit {
     Write-Info "Создание первого коммита..."
     
     $commitMessage = @"
-feat: Initial AI Agent setup with Mistral Small
+feat: Portable local Qwen assistant with llama.cpp
 
 ### Что добавлено:
-- Ollama installer script for Windows
-- Configuration for Mistral Small model
+- Portable llama.cpp runtime for Windows x64 CPU
+- Configuration for Qwen2.5 7B Instruct Q4_K_M
 - Documentation in Russian
 - Git setup scripts
-- Export/import capabilities
+- Offline package verification
 
 ### Модели:
-- Primary: Mistral Small (22B optimized)
-- Alternative: LLaMA 3.2 3B/7B
-- Support for Code Llama, Qwen
+- Primary: Qwen2.5 7B Instruct (Q4_K_M)
 
 ### Настройка:
-- Automatic Ollama installation
-- Model export/import for portability
-- Environment configuration
-- Performance optimization
+- No Ollama installation or user environment variables
+- Offline API and browser chat
+- Release package verification
 "@
     
     git commit -m $commitMessage
@@ -356,8 +353,8 @@ Write-Host "  git pull                            # Получить обнов�
 Write-Host ""
 Write-Info "Следующие шаги:"
 Write-Host "1. Проверьте установку: .\install.ps1" -ForegroundColor Yellow
-Write-Host "2. Протестируйте модель: ollama run mistral-small" -ForegroundColor Yellow
-Write-Host "3. Экспортируйте модель: .\export-model.ps1" -ForegroundColor Yellow
+Write-Host "2. Протестируйте модель: .\Start-Chat.ps1" -ForegroundColor Yellow
+Write-Host "3. Создайте опись релизного пакета: .\export-model.ps1" -ForegroundColor Yellow
 
 if (-not [string]::IsNullOrWhiteSpace($GitHubUrl)) {
     Write-Host ""

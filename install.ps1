@@ -1,422 +1,214 @@
-<#
+﻿<#
 .SYNOPSIS
-    Скрипт автоматической установки Ollama и ИИ-модели на Windows
+    Подготавливает автономный локальный чат на базе llama.cpp для Windows.
 
 .DESCRIPTION
-    - Проверяет наличие Ollama
-    - Устанавливает Ollama при необходимости (через winget или прямой download)
-    - Загружает или импортирует модель
-    - Проверяет работоспособность
-
-.PARAMETER Model
-    Имя модели для установки (по умолчанию: llama3.2:7b)
-
-.PARAMETER ModelArchive
-    Путь к tar-архиву модели для импорта (опционально)
-
-.PARAMETER SkipOllamaCheck
-    Пропустить проверку Ollama (если уже установлен)
-
-.EXAMPLE
-    .\install.ps1
-    Установка с параметрами по умолчанию
-
-.EXAMPLE
-    .\install.ps1 -Model "llama3.2:3b"
-    Установка компактной модели для слабых машин
-
-.EXAMPLE
-    .\install.ps1 -ModelArchive ".\export\llama3.2-7b.tar"
-    Импорт модели из архива
+    Скрипт использует только файлы из папки проекта: портативный llama-server.exe,
+    его DLL и локальный GGUF. Он не устанавливает Ollama, не меняет переменные
+    среды пользователя и не выполняет сетевых загрузок.
 #>
-
+[CmdletBinding()]
 param(
-    [string]$Model = "mistral-small",
-    [string]$ModelArchive = "",
-    [switch]$SkipOllamaCheck
+    [switch]$Console,
+    [switch]$NoBrowser
 )
 
-# ============================================
-# Конфигурация
-# ============================================
-$ErrorActionPreference = "Stop"
-$OllamaUrl = "https://ollama.com/download"
-$OllamaApiBase = "http://localhost:11434"
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
-# Цвета для вывода
-function Write-Success { Write-Host "[OK] $args" -ForegroundColor Green }
-function Write-Info { Write-Host "[INFO] $args" -ForegroundColor Cyan }
-function Write-Warn { Write-Host "[WARN] $args" -ForegroundColor Yellow }
-function Write-Err { Write-Host "[ERROR] $args" -ForegroundColor Red }
+$ProjectRoot = $PSScriptRoot
+$RuntimeDirectory = Join-Path $ProjectRoot 'runtime\llama.cpp'
+$ServerPath = Join-Path $RuntimeDirectory 'llama-server.exe'
+$PackageManifest = Join-Path $ProjectRoot 'models\package\model.json'
+$ChatLauncher = Join-Path $ProjectRoot 'Start-Chat.ps1'
+$ApiBaseUrl = 'http://127.0.0.1:8080'
+$script:LogLines = [System.Collections.Generic.List[string]]::new()
 
-# ============================================
-# Проверка прав администратора
-# ============================================
-function Test-Administrator {
-    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+function Write-InstallLog {
+    param([string]$Message, [ValidateSet('Info', 'Success', 'Warning', 'Error')][string]$Level = 'Info')
+
+    $line = '[{0:HH:mm:ss}] [{1}] {2}' -f (Get-Date), $Level.ToUpperInvariant(), $Message
+    $script:LogLines.Add($line)
+    $colors = @{ Info = 'Cyan'; Success = 'Green'; Warning = 'Yellow'; Error = 'Red' }
+    if ($Console) { Write-Host $line -ForegroundColor $colors[$Level] }
 }
 
-# ============================================
-# Проверка установки Ollama
-# ============================================
-function Test-OllamaInstalled {
-    try {
-        $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
-        if ($null -ne $ollamaCmd) {
-            Write-Success "Ollama найден: $($ollamaCmd.Source)"
-            return $true
+function Get-Package {
+    if (-not (Test-Path -LiteralPath $PackageManifest -PathType Leaf)) {
+        throw "Не найден манифест локальной модели: $PackageManifest"
+    }
+
+    $package = Get-Content -LiteralPath $PackageManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($field in 'model_id', 'gguf_file', 'sha256', 'required_disk_gb') {
+        if ([string]::IsNullOrWhiteSpace([string]$package.$field)) {
+            throw "В манифесте модели не заполнено поле '$field'."
         }
     }
-    catch {
-        # Игнорируем ошибку
+
+    $modelPath = Join-Path (Split-Path -Parent $PackageManifest) $package.gguf_file
+    if (-not (Test-Path -LiteralPath $modelPath -PathType Leaf)) {
+        throw "Не найден локальный файл модели: $modelPath"
     }
 
-    # Проверка в стандартных путях
-    $defaultPath = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"
-    if (Test-Path $defaultPath) {
-        Write-Success "Ollama найден: $defaultPath"
-        $env:PATH = "$env:PATH;$env:LOCALAPPDATA\Programs\Ollama"
-        return $true
+    $actualHash = (Get-FileHash -LiteralPath $modelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $package.sha256.ToLowerInvariant()) {
+        throw "Контрольная сумма модели не совпадает. Ожидалось: $($package.sha256); получено: $actualHash"
     }
 
-    return $false
+    return [PSCustomObject]@{
+        Id = $package.model_id
+        Name = if ($package.display_name) { $package.display_name } else { $package.model_id }
+        GgufPath = $modelPath
+        RequiredDiskGb = [double]$package.required_disk_gb
+    }
 }
 
-# ============================================
-# Установка Ollama
-# ============================================
-function Install-Ollama {
-    Write-Info "Начинаю установку Ollama..."
+function Test-PortableRuntime {
+    if (-not (Test-Path -LiteralPath $ServerPath -PathType Leaf)) {
+        throw "Не найден портативный сервер llama.cpp: $ServerPath"
+    }
 
-    # Способ 1: Попытка через winget
+    $requiredFiles = @('llama-server-impl.dll', 'llama.dll', 'ggml.dll', 'ggml-base.dll', 'libomp.dll')
+    $missingFiles = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $RuntimeDirectory $_) -PathType Leaf) })
+    if ($missingFiles.Count -gt 0) {
+        throw "Пакет llama.cpp неполный. Не найдены файлы: $($missingFiles -join ', ')"
+    }
+}
+
+function Get-SystemCheck {
+    $ramGb = [math]::Round(((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB), 1)
+    $drive = Get-PSDrive -Name ($ProjectRoot.Substring(0, 1)) -ErrorAction Stop
+    $gpuNames = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object Name)
+    return [PSCustomObject]@{
+        RamGb = $ramGb
+        FreeDiskGb = [math]::Round($drive.Free / 1GB, 1)
+        Gpus = if ($gpuNames) { $gpuNames -join '; ' } else { 'Не определён' }
+    }
+}
+
+function Test-LlamaApi {
     try {
-        $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-        if ($null -ne $wingetCmd) {
-            Write-Info "Установка через winget..."
-            winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements
-            
-            if ($?) {
-                Write-Success "Ollama установлен через winget"
-                
-                # Обновляем PATH
-                $env:PATH = "$env:PATH;$env:LOCALAPPDATA\Programs\Ollama"
-                return $true
-            }
-        }
-    }
-    catch {
-        Write-Warn "Не удалось установить через winget: $_"
-    }
-
-    # Способ 2: Прямая загрузка
-    Write-Info "Загрузка Ollama с официального сайта..."
-    
-    $downloadUrl = "https://ollama.com/download/OllamaSetup.exe"
-    $installerPath = "$env:TEMP\OllamaSetup.exe"
-
-    try {
-        # Загрузка установщика
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath -UseBasicParsing
-        Write-Info "Установщик загружен: $installerPath"
-
-        # Запуск установки
-        Write-Info "Запуск установщика (требуется взаимодействие пользователя)..."
-        Start-Process -FilePath $installerPath -Wait
-        
-        # Проверка успешности
-        if (Test-OllamaInstalled) {
-            Write-Success "Ollama успешно установлен"
-            return $true
-        }
-        else {
-            Write-Err "Ollama не найден после установки"
-            return $false
-        }
-    }
-    catch {
-        Write-Err "Ошибка при загрузке/установке: $_"
+        $response = Invoke-RestMethod -Uri "$ApiBaseUrl/v1/models" -TimeoutSec 2
+        return $null -ne $response.data
+    } catch {
         return $false
     }
-    finally {
-        # Удаление установщика
-        if (Test-Path $installerPath) {
-            Remove-Item $installerPath -Force
-        }
-    }
 }
 
-# ============================================
-# Запуск Ollama сервера
-# ============================================
-function Start-OllamaServer {
-    Write-Info "Проверка статуса Ollama..."
+function Start-LlamaServer {
+    param([Parameter(Mandatory)]$Package)
 
-    try {
-        # Проверка доступности API
-        $response = Invoke-WebRequest -Uri "$OllamaApiBase/api/tags" -Method Get -TimeoutSec 5 -ErrorAction SilentlyContinue
-        
-        if ($response.StatusCode -eq 200) {
-            Write-Success "Ollama сервер работает"
-            return $true
+    if (Test-LlamaApi) {
+        $models = Invoke-RestMethod -Uri "$ApiBaseUrl/v1/models" -TimeoutSec 2
+        if (@($models.data | Where-Object { $_.id -eq $Package.Id }).Count -eq 0) {
+            throw "Порт 8080 уже занят сервером с другой моделью. Освободите порт и повторите запуск."
+        }
+        Write-InstallLog 'Портативный сервер llama.cpp уже запущен.' 'Success'
+        return
+    }
+
+    Write-InstallLog 'Запуск портативного сервера llama.cpp...'
+    $arguments = @('--model', ('"{0}"' -f $Package.GgufPath), '--alias', $Package.Id, '--host', '127.0.0.1', '--port', '8080', '--ctx-size', '8192', '--offline', '--no-webui')
+    Start-Process -FilePath $ServerPath -WorkingDirectory $RuntimeDirectory -ArgumentList $arguments -WindowStyle Hidden | Out-Null
+
+    for ($attempt = 1; $attempt -le 90; $attempt++) {
+        Start-Sleep -Seconds 1
+        if (Test-LlamaApi) {
+            Write-InstallLog 'Локальный API llama.cpp доступен на http://127.0.0.1:8080.' 'Success'
+            return
         }
     }
-    catch {
-        # Сервер не отвечает, запускаем
-        Write-Info "Запуск Ollama сервера..."
-        
+    throw 'Сервер llama.cpp не ответил за 90 секунд. Проверьте, что порт 8080 свободен и в системе достаточно памяти.'
+}
+
+function Write-AppConfiguration {
+    param([Parameter(Mandatory)]$Package)
+
+    [PSCustomObject]@{
+        model = $Package.Id
+        display_name = $Package.Name
+        api_url = $ApiBaseUrl
+        api_type = 'openai-compatible'
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ProjectRoot 'app-config.json') -Encoding UTF8
+}
+
+function Test-ModelResponse {
+    param([Parameter(Mandatory)]$Package)
+
+    Write-InstallLog "Проверка ответа модели '$($Package.Id)'..."
+    $body = @{
+        model = $Package.Id
+        messages = @(@{ role = 'user'; content = 'Ответь одним словом: готово' })
+        temperature = 0
+        max_tokens = 16
+        stream = $false
+    } | ConvertTo-Json -Depth 4
+    $response = Invoke-RestMethod -Uri "$ApiBaseUrl/v1/chat/completions" -Method Post -Body $body -ContentType 'application/json; charset=utf-8' -TimeoutSec 180
+    $answer = [string]$response.choices[0].message.content
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        throw "Модель '$($Package.Id)' не вернула ответ."
+    }
+    Write-InstallLog "Модель отвечает: $($answer.Trim().Substring(0, [Math]::Min(60, $answer.Trim().Length)))" 'Success'
+}
+
+function Invoke-Installation {
+    Test-PortableRuntime
+    $package = Get-Package
+    $system = Get-SystemCheck
+    Write-InstallLog "ОЗУ: $($system.RamGb) ГБ; свободно: $($system.FreeDiskGb) ГБ; GPU: $($system.Gpus)"
+    if ($system.FreeDiskGb -lt $package.RequiredDiskGb) {
+        throw "Недостаточно свободного места. Для пакета требуется не менее $($package.RequiredDiskGb) ГБ."
+    }
+    if ($system.RamGb -lt 8) {
+        Write-InstallLog 'Обнаружено менее 8 ГБ ОЗУ: модель может не запуститься или будет работать нестабильно.' 'Warning'
+    }
+    Write-InstallLog "Проверена модель '$($package.Name)' и её SHA-256." 'Success'
+    Start-LlamaServer -Package $package
+    Test-ModelResponse -Package $package
+    Write-AppConfiguration -Package $package
+    Write-InstallLog 'Подготовка завершена. Интернет, Ollama и переменные среды пользователя не использовались.' 'Success'
+    if (-not $NoBrowser) { & $ChatLauncher }
+}
+
+function Start-Wizard {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $form = [System.Windows.Forms.Form]@{
+        Text = 'Локальный ИИ - подготовка'
+        Size = [System.Drawing.Size]::new(720, 490)
+        StartPosition = 'CenterScreen'
+        FormBorderStyle = 'FixedDialog'
+        MaximizeBox = $false
+        Font = [System.Drawing.Font]::new('Segoe UI', 10)
+    }
+    $title = [System.Windows.Forms.Label]@{ Location = [System.Drawing.Point]::new(24, 20); Size = [System.Drawing.Size]::new(650, 36); Font = [System.Drawing.Font]::new('Segoe UI', 18, [System.Drawing.FontStyle]::Bold); Text = 'Мастер подготовки локального ИИ' }
+    $steps = [System.Windows.Forms.Label]@{ Location = [System.Drawing.Point]::new(26, 68); Size = [System.Drawing.Size]::new(650, 28); Text = '1. Проверка пакета   2. Проверка компьютера   3. Запуск модели   4. Открытие чата' }
+    $description = [System.Windows.Forms.Label]@{ Location = [System.Drawing.Point]::new(26, 108); Size = [System.Drawing.Size]::new(650, 52); Text = 'Мастер использует только llama.cpp, DLL и модель из этой папки. Ollama не требуется и не устанавливается.' }
+    $logBox = [System.Windows.Forms.TextBox]@{ Location = [System.Drawing.Point]::new(26, 172); Size = [System.Drawing.Size]::new(650, 210); Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; BackColor = [System.Drawing.Color]::White }
+    $startButton = [System.Windows.Forms.Button]@{ Location = [System.Drawing.Point]::new(450, 397); Size = [System.Drawing.Size]::new(108, 34); Text = 'Запустить' }
+    $closeButton = [System.Windows.Forms.Button]@{ Location = [System.Drawing.Point]::new(568, 397); Size = [System.Drawing.Size]::new(108, 34); Text = 'Закрыть' }
+    $form.Controls.AddRange(@($title, $steps, $description, $logBox, $startButton, $closeButton))
+    $closeButton.Add_Click({ $form.Close() })
+    $startButton.Add_Click({
+        $startButton.Enabled = $false
+        $logBox.Clear()
         try {
-            Start-Process -FilePath "ollama" -ArgumentList "serve" -WindowStyle Hidden
-            
-            # Ожидание запуска
-            $maxAttempts = 30
-            $attempt = 0
-            
-            while ($attempt -lt $maxAttempts) {
-                Start-Sleep -Seconds 1
-                $attempt++
-                
-                try {
-                    $response = Invoke-WebRequest -Uri "$OllamaApiBase/api/tags" -Method Get -TimeoutSec 2 -ErrorAction SilentlyContinue
-                    if ($response.StatusCode -eq 200) {
-                        Write-Success "Ollama сервер запущен"
-                        return $true
-                    }
-                }
-                catch {
-                    # Продолжаем ожидание
-                }
-                
-                Write-Info "Ожидание запуска сервера... ($attempt/$maxAttempts)"
-            }
-            
-            Write-Err "Не удалось запустить сервер за $maxAttempts секунд"
-            return $false
+            Invoke-Installation
+            $logBox.Lines = $script:LogLines.ToArray()
+            [System.Windows.Forms.MessageBox]::Show('Локальная модель готова. Чат открыт в браузере.', 'Подготовка завершена', 'OK', 'Information') | Out-Null
+        } catch {
+            Write-InstallLog $_.Exception.Message 'Error'
+            $logBox.Lines = $script:LogLines.ToArray()
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Подготовка не выполнена', 'OK', 'Error') | Out-Null
+        } finally {
+            $startButton.Enabled = $true
         }
-        catch {
-            Write-Err "Ошибка запуска сервера: $_"
-            return $false
-        }
-    }
-    
-    return $false
+    })
+    [void]$form.ShowDialog()
 }
 
-# ============================================
-# Загрузка модели
-# ============================================
-function Install-Model {
-    param([string]$ModelName)
-    
-    Write-Info "Загрузка модели $ModelName..."
-
-    try {
-        # Проверка, не установлена ли уже модель
-        $models = ollama list 2>$null
-        if ($models -match $ModelName.Split(':')[0]) {
-            Write-Success "Модель $ModelName уже установлена"
-            return $true
-        }
-
-        # Загрузка модели
-        Write-Info "Загрузка модели (это может занять несколько минут)..."
-        ollama pull $ModelName
-
-        if ($?) {
-            Write-Success "Модель $ModelName успешно загружена"
-            return $true
-        }
-        else {
-            Write-Err "Не удалось загрузить модель $ModelName"
-            return $false
-        }
-    }
-    catch {
-        Write-Err "Ошибка при загрузке модели: $_"
-        return $false
-    }
-}
-
-# ============================================
-# Импорт модели из архива
-# ============================================
-function Import-ModelFromArchive {
-    param([string]$ArchivePath)
-
-    Write-Info "Импорт модели из архива: $ArchivePath"
-
-    if (-not (Test-Path $ArchivePath)) {
-        Write-Err "Архив не найден: $ArchivePath"
-        return $false
-    }
-
-    try {
-        ollama load $ArchivePath
-
-        if ($?) {
-            Write-Success "Модель успешно импортирована"
-            return $true
-        }
-        else {
-            Write-Err "Не удалось импортировать модель"
-            return $false
-        }
-    }
-    catch {
-        Write-Err "Ошибка при импорте модели: $_"
-        return $false
-    }
-}
-
-# ============================================
-# Проверка работоспособности
-# ============================================
-function Test-ModelWorking {
-    param([string]$ModelName)
-
-    Write-Info "Проверка работоспособности модели..."
-
-    try {
-        $body = @{
-            model = $ModelName
-            prompt = "Say 'Hello, World!' in Russian"
-            stream = $false
-        } | ConvertTo-Json -Depth 2
-
-        $response = Invoke-RestMethod `
-            -Uri "$OllamaApiBase/api/generate" `
-            -Method Post `
-            -Body $body `
-            -ContentType "application/json" `
-            -TimeoutSec 60
-
-        if ($response.response) {
-            Write-Success "Модель отвечает на запросы"
-            Write-Info "Ответ модели: $($response.response.Substring(0, [Math]::Min(100, $response.response.Length)))..."
-            return $true
-        }
-        else {
-            Write-Warn "Модель не вернула ответ"
-            return $false
-        }
-    }
-    catch {
-        Write-Err "Ошибка при проверке модели: $_"
-        return $false
-    }
-}
-
-# ============================================
-# Отображение информации о системе
-# ============================================
-function Show-SystemInfo {
-    Write-Info "Информация о системе:"
-    
-    # RAM
-    $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
-    Write-Host "  RAM: $([Math]::Round($ram, 1)) ГБ"
-    
-    # GPU
-    try {
-        $gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match "NVIDIA|AMD|Intel" }
-        if ($gpu) {
-            Write-Host "  GPU: $($gpu.Name)"
-        }
-        else {
-            Write-Host "  GPU: Не обнаружено (будет использоваться CPU)"
-        }
-    }
-    catch {
-        Write-Host "  GPU: Не удалось определить"
-    }
-    
-    # Место на диске
-    $drive = Get-PSDrive C
-    $freeSpace = $drive.Free / 1GB
-    Write-Host "  Свободно на диске C: $([Math]::Round($freeSpace, 1)) ГБ"
-    
-    Write-Host ""
-}
-
-# ============================================
-# Главная функция
-# ============================================
-function Main {
-    Write-Host ""
-    Write-Host "======================================" -ForegroundColor Magenta
-    Write-Host "  Установка локальной ИИ-модели" -ForegroundColor Magenta
-    Write-Host "======================================" -ForegroundColor Magenta
-    Write-Host ""
-
-    # Информация о системе
-    Show-SystemInfo
-
-    # 1. Проверка/установка Ollama
-    if (-not $SkipOllamaCheck) {
-        if (-not (Test-OllamaInstalled)) {
-            Write-Warn "Ollama не установлен"
-            
-            if (-not (Install-Ollama)) {
-                Write-Err "Не удалось установить Ollama. Установите вручную с $OllamaUrl"
-                exit 1
-            }
-        }
-    }
-
-    # 2. Запуск сервера
-    if (-not (Start-OllamaServer)) {
-        Write-Err "Не удалось запустить Ollama сервер"
-        exit 1
-    }
-
-    # 3. Установка/импорт модели
-    if ($ModelArchive -ne "") {
-        # Импорт из архива
-        if (-not (Import-ModelFromArchive -ArchivePath $ModelArchive)) {
-            Write-Err "Не удалось импортировать модель из архива"
-            
-            # Попытка загрузить из интернета
-            Write-Info "Попытка загрузить модель из интернета..."
-            if (-not (Install-Model -ModelName $Model)) {
-                exit 1
-            }
-        }
-    }
-    else {
-        # Загрузка из интернета
-        if (-not (Install-Model -ModelName $Model)) {
-            exit 1
-        }
-    }
-
-    # 4. Проверка работоспособности
-    if (-not (Test-ModelWorking -ModelName $Model)) {
-        Write-Warn "Модель установлена, но проверка не прошла"
-    }
-
-    # Итог
-    Write-Host ""
-    Write-Host "======================================" -ForegroundColor Green
-    Write-Host "  Установка завершена!" -ForegroundColor Green
-    Write-Host "======================================" -ForegroundColor Green
-    Write-Host ""
-    Write-Info "Для запуска чата выполните: ollama run $Model"
-    Write-Info "API доступен по адресу: $OllamaApiBase"
-    Write-Host ""
-
-    # Список установленных моделей
-    Write-Info "Установленные модели:"
-    ollama list
-    Write-Host ""
-}
-
-# Запуск
-try {
-    Main
-}
-catch {
-    Write-Err "Критическая ошибка: $_"
-    Write-Host $_.ScriptStackTrace
-    exit 1
+if ($Console) {
+    try { Invoke-Installation } catch { Write-InstallLog $_.Exception.Message 'Error'; exit 1 }
+} else {
+    Start-Wizard
 }

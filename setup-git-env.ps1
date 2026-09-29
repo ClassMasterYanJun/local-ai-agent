@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Добавляет Git в текущее окружение PowerShell/VS Code
 

@@ -1,10 +1,11 @@
-<#
+﻿<#
 .SYNOPSIS
-    Скрипт для подготовки датасетов для обучения модели
+    Скрипт для подготовки датасетов для внешнего обучения модели
 
 .DESCRIPTION
-    Подготавливает данные в формате JSONL для обучения модели через fine-tuning.
-    Поддерживает различные источники данных и форматы.
+    Подготавливает данные в формате JSONL для отдельного контура fine-tuning.
+    Портативный runtime llama.cpp из этого проекта не читает датасет и не меняет
+    веса GGUF-файла.
 
 .PARAMETER InputType
     Тип входных данных:
@@ -551,15 +552,14 @@ if ($samples -and $samples.Count -gt 0) {
         Write-Host "✓ Сохранено: $OutputPath" -ForegroundColor Green
         
         Write-Host ""
-        Write-Info "Для обучения модели используйте:"
+        Write-Info "Чтобы сохранить профиль системной инструкции, используйте:"
         Write-Host "  .\train-model.ps1 -TrainingType dataset -DatasetPath '$OutputPath'" -ForegroundColor Cyan
-        Write-Host "  .\train-model.ps1 -TrainingType modelfile -Specialization custom" -ForegroundColor Cyan
         
         Write-Host ""
         Write-Info "Следующие шаги:"
         Write-Host "1. Проверьте датасет: Get-Content '$OutputPath' -First 3" -ForegroundColor White
-        Write-Host "2. Обучите модель: .\train-model.ps1" -ForegroundColor White
-        Write-Host "3. Протестируйте: ollama run [новая-модель]" -ForegroundColor White
+        Write-Host "2. При необходимости создайте профиль: .\train-model.ps1" -ForegroundColor White
+        Write-Host "3. Для реального fine-tuning используйте отдельный внешний контур" -ForegroundColor White
     }
 } else {
     Write-Host ""

@@ -1,9 +1,14 @@
-﻿# Ollama модели и кэш
+# Локальные данные и результаты работы
 export/
-models/downloads/
-models/cache/
-models/*.bin
-models/*.gguf
+.ollama/
+training/logs/
+training/output/
+
+# Файлы модели поставляются только в релизном пакете или через Git LFS.
+# Не добавляйте их в обычный Git-коммит.
+models/package/*.gguf
+runtime/llama.cpp/
+runtime/OllamaSetup.exe
 
 # Временные файлы
 *.tmp
@@ -14,6 +19,9 @@ models/*.gguf
 .env
 .env.local
 .env.*.local
+
+# Создаётся установщиком для веб-чата
+app-config.json
 
 # Системные файлы
 .DS_Store
@@ -46,15 +54,14 @@ desktop.ini
 *.bak
 *.backup
 
-# Журналы Ollama
-Ollama.log
-ollama*.log
+# Журналы локального сервера
+llama-server*.log
 
 # Конфигурация с данными
 config.json
 secrets.json
 
-# Большие файлы
+# Архивы
 *.tar
 *.zip
 *.7z

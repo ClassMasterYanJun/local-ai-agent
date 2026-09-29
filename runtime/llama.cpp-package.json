@@ -1,0 +1,10 @@
+{
+  "runtime": "llama.cpp",
+  "release": "b11146",
+  "platform": "Windows x64 CPU",
+  "archive": "llama-b11146-bin-win-cpu-x64.zip",
+  "archive_sha256": "14cf1303ca9ac3abd94816850532f9f9a69ac66fbaca3776fc6f9061c2fac1d1",
+  "source_url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-cpu-x64.zip",
+  "runtime_directory": "llama.cpp",
+  "entry_point": "llama-server.exe"
+}

@@ -1,0 +1,7 @@
+{
+  "model_id": "qwen2.5-7b-instruct-q4-k-m",
+  "display_name": "Qwen2.5 7B Instruct (Q4_K_M)",
+  "gguf_file": "local-assistant.gguf",
+  "sha256": "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423",
+  "required_disk_gb": 10
+}
